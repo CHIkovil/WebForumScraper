@@ -18,6 +18,7 @@ LOGGER = getLogger()
 
 class MsgScraperConfig(BaseModel):
     msg_block_class_name: str
+    username_class_name: str
     msg_text_class_name: str
     date_pattern: str
     forum_link_patterns: list[str]
@@ -32,7 +33,8 @@ class WebTextScraperOperations:
                                             msg_config: MsgScraperConfig,
                                             is_stop_404: bool):
         try:
-            html_content, isStop = await WebTextScraperOperations._get_html_from_url(url=base_url, is_stop_404=is_stop_404)
+            html_content, isStop = await WebTextScraperOperations._get_html_from_url(url=base_url,
+                                                                                     is_stop_404=is_stop_404)
 
             if isStop:
                 raise WebScraperNotFoundError()
@@ -42,14 +44,10 @@ class WebTextScraperOperations:
 
             base_soup = BeautifulSoup(html_content, 'html.parser')
 
-            title = await WebTextScraperOperations._get_title_from_html(base_soup=base_soup)
-
-            saved_file_path = saved_path / f"{title}.txt"
-
             await WebTextScraperOperations._parse_and_save_msg_contents_from_html(base_soup=base_soup,
                                                                                   msg_config=msg_config,
                                                                                   url=base_url,
-                                                                                  saved_file_path=saved_file_path)
+                                                                                  saved_path=saved_path)
         except WebScraperNotFoundError:
             raise
         except (Exception, WebScraperError) as err:
@@ -79,27 +77,13 @@ class WebTextScraperOperations:
         finally:
             return result, isStop
 
-    @staticmethod
-    async def _get_title_from_html(*, base_soup: BeautifulSoup) -> str or None:
-        result = None
-
-        try:
-            title_tag = await aio_to_thread(base_soup.find, 'title')
-
-            result = "".join(x for x in title_tag.text if (x.isalnum() or x in "._- "))
-
-        except Exception as err:
-            LOGGER.error(err)
-
-        finally:
-            return result
 
     @staticmethod
     async def _parse_and_save_msg_contents_from_html(*,
                                                      base_soup: BeautifulSoup,
                                                      msg_config: MsgScraperConfig,
                                                      url: str,
-                                                     saved_file_path: Path):
+                                                     saved_path: Path):
         result = None
 
         try:
@@ -113,9 +97,10 @@ class WebTextScraperOperations:
                                                                             msg_config=msg_config))
                 tasks.append(task)
 
-            msg_texts = await aio_gather(*tasks)
+            result_objs = await aio_gather(*tasks)
 
-            for text in msg_texts:
+            for text, username in result_objs:
+                saved_file_path = saved_path / f"{username}.txt"
                 async with aio_open(saved_file_path, 'a' if saved_file_path.exists() else 'w') as f:
                     await f.write(text)
 
@@ -130,16 +115,16 @@ class WebTextScraperOperations:
                                  url: str,
                                  msg_obj: BeautifulSoup,
                                  msg_config: MsgScraperConfig
-                                 ) -> str:
+                                 ) -> (str, str):
 
         result = None
 
         try:
             text = ""
 
-            forum_urls = await WebTextScraperOperations._get_forum_urls_from_msg(url=url,
-                                                                                 forum_link_patterns=msg_config.forum_link_patterns,
-                                                                                 msg_obj=msg_obj)
+            forum_url = await WebTextScraperOperations._get_forum_url_from_msg(url=url,
+                                                                               forum_link_patterns=msg_config.forum_link_patterns,
+                                                                               msg_obj=msg_obj)
 
             msg_text_objs = await aio_to_thread(msg_obj.find_all, class_=msg_config.msg_text_class_name)
 
@@ -152,11 +137,14 @@ class WebTextScraperOperations:
                                                                      date_pattern=msg_config.date_pattern)
             text += "\n"
             text += f"{date}\n"
-            text += f"{' '.join(forum_urls)}\n"
+            text += f"{forum_url}\n"
             text += f"{msg_text}"
             text += "\n"
 
-            result = text
+            username = await WebTextScraperOperations._get_username_from_msg(msg_obj=msg_obj,
+                                                                             username_class_name=msg_config.username_class_name)
+
+            result = text, username
 
         except Exception as err:
             LOGGER.error(err)
@@ -165,34 +153,29 @@ class WebTextScraperOperations:
             return result
 
     @staticmethod
-    async def _get_forum_urls_from_msg(*,
-                                       msg_obj: BeautifulSoup,
-                                       forum_link_patterns: [str],
-                                       url: str) -> [str] or None:
+    async def _get_forum_url_from_msg(*,
+                                      msg_obj: BeautifulSoup,
+                                      forum_link_patterns: [str],
+                                      url: str) -> str or None:
 
         result = None
 
         try:
-            link_objs = await aio_to_thread(msg_obj.find_all, href=True)
+            link_obj = await aio_to_thread(msg_obj.find, href=True)
 
-            forum_urls = []
+            link = link_obj.get('href')
+            text = link_obj.get_text()
 
-            for obj in link_objs:
-                link = obj.get('href')
-                text = obj.get_text()
+            if not link:
+                return
 
-                if not link:
-                    continue
-
-                if not re_search(r'\.\w+(?:\?.*)?$', link, re_I) and (
-                        all([re_search(pattern, link, re_I) for pattern in
-                             forum_link_patterns])):
-                    if link.startswith('/'):
-                        forum_urls.append(f"{urljoin(url, link)} ({text})")
-                    elif urlparse(link).netloc == urlparse(url).netloc:
-                        forum_urls.append(f"{link} ({text})")
-
-            result = forum_urls
+            if not re_search(r'\.\w+(?:\?.*)?$', link, re_I) and (
+                    all([re_search(pattern, link, re_I) for pattern in
+                         forum_link_patterns])):
+                if link.startswith('/'):
+                    result = f"{urljoin(url, link)} ({text})"
+                elif urlparse(link).netloc == urlparse(url).netloc:
+                    result = f"{link} ({text})"
 
         except Exception as err:
             LOGGER.error(err)
@@ -216,6 +199,23 @@ class WebTextScraperOperations:
 
             if match_obj:
                 result = match_obj.group(1).strip()
+
+        except Exception as err:
+            LOGGER.error(err)
+
+        finally:
+            return result
+
+    @staticmethod
+    async def _get_username_from_msg(*,
+                                     msg_obj: BeautifulSoup,
+                                     username_class_name: str) -> str or None:
+        result = None
+
+        try:
+
+            username_obj = await aio_to_thread(msg_obj.find, class_=username_class_name)
+            result = "".join(x for x in username_obj.get_text() if (x.isalnum() or x in "._- "))
 
         except Exception as err:
             LOGGER.error(err)

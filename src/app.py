@@ -11,7 +11,6 @@ LOGGER = getLogger()
 
 
 
-
 if __name__ == "__main__":
     try:
         aio_run(on_script())
