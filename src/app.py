@@ -2,12 +2,12 @@ from asyncio import run as aio_run
 from src.Scraper.web_text_scraper import WebTextScraper
 from logging import getLogger
 from pathlib import Path
-from src.Scraper.web_text_scraper_operations import MsgScraperConfig
+from src.Scraper.web_text_scraper_operations import MsgScraperConfig, MsgScraperUsernameConfig
 from src.Error.web_scraper_error import WebScraperNotFoundError
 from sys import exit
 
-
 LOGGER = getLogger()
+
 
 
 

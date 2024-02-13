@@ -12,16 +12,23 @@ from urllib.parse import urlparse, urljoin
 from asyncio import (create_task as aio_task,
                      gather as aio_gather)
 from re import compile as re_compile
+from fake_useragent import UserAgent
 
 LOGGER = getLogger()
 
 
+class MsgScraperUsernameConfig(BaseModel):
+    block_name: str
+    is_class: bool
+    is_link: bool
+
+
 class MsgScraperConfig(BaseModel):
     msg_block_class_name: str
-    username_class_name: str
+    username_config: MsgScraperUsernameConfig
     msg_text_class_name: str
     date_pattern: str
-    forum_link_patterns: list[str]
+    forum_link_patterns: list[str] | None
 
 
 class WebTextScraperOperations:
@@ -60,7 +67,7 @@ class WebTextScraperOperations:
 
         try:
             rt = RequestsTor(autochange_id=1)
-            response = await aio_to_thread(rt.get, url)
+            response = await aio_to_thread(rt.get, url, headers={'User-agent': UserAgent().random})
 
             if response.status_code == 200:
                 result = response.text
@@ -76,7 +83,6 @@ class WebTextScraperOperations:
             LOGGER.error(err)
         finally:
             return result, isStop
-
 
     @staticmethod
     async def _parse_and_save_msg_contents_from_html(*,
@@ -142,7 +148,7 @@ class WebTextScraperOperations:
             text += "\n"
 
             username = await WebTextScraperOperations._get_username_from_msg(msg_obj=msg_obj,
-                                                                             username_class_name=msg_config.username_class_name)
+                                                                             username_config=msg_config.username_config)
 
             result = text, username
 
@@ -161,21 +167,25 @@ class WebTextScraperOperations:
         result = None
 
         try:
-            link_obj = await aio_to_thread(msg_obj.find, href=True)
 
-            link = link_obj.get('href')
-            text = link_obj.get_text()
+            if forum_link_patterns:
+                link_obj = await aio_to_thread(msg_obj.find, href=True)
 
-            if not link:
-                return
+                link = link_obj.get('href')
+                text = link_obj.get_text()
 
-            if not re_search(r'\.\w+(?:\?.*)?$', link, re_I) and (
-                    all([re_search(pattern, link, re_I) for pattern in
-                         forum_link_patterns])):
-                if link.startswith('/'):
-                    result = f"{urljoin(url, link)} ({text})"
-                elif urlparse(link).netloc == urlparse(url).netloc:
-                    result = f"{link} ({text})"
+                if not link:
+                    return
+
+                if not re_search(r'\.\w+(?:\?.*)?$', link, re_I) and (
+                        all([re_search(pattern, link, re_I) for pattern in
+                             forum_link_patterns])):
+                    if link.startswith('/'):
+                        result = f"{urljoin(url, link)} ({text})"
+                    elif urlparse(link).netloc == urlparse(url).netloc:
+                        result = f"{link} ({text})"
+            else:
+                result = url
 
         except Exception as err:
             LOGGER.error(err)
@@ -209,13 +219,23 @@ class WebTextScraperOperations:
     @staticmethod
     async def _get_username_from_msg(*,
                                      msg_obj: BeautifulSoup,
-                                     username_class_name: str) -> str or None:
+                                     username_config: MsgScraperUsernameConfig) -> str or None:
         result = None
 
         try:
 
-            username_obj = await aio_to_thread(msg_obj.find, class_=username_class_name)
-            result = "".join(x for x in username_obj.get_text() if (x.isalnum() or x in "._- "))
+            if username_config.is_class:
+                username_obj = await aio_to_thread(msg_obj.find, class_=username_config.block_name)
+            else:
+                username_obj = await aio_to_thread(msg_obj.find, username_config.block_name)
+
+            if username_config.is_link:
+                username_link_obj = await aio_to_thread(username_obj.find, href=True)
+                username = username_link_obj.get_text()
+            else:
+                username = username_obj.get_text()
+
+            result = "".join(x for x in username if (x.isalnum() or x in "._- "))
 
         except Exception as err:
             LOGGER.error(err)
