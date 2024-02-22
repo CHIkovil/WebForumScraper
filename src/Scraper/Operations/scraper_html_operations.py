@@ -4,6 +4,7 @@ from asyncio import to_thread as aio_to_thread
 from src.Error.scraper_error import ScraperError
 from bs4 import BeautifulSoup
 from logging import getLogger
+from requests.exceptions import ConnectionError
 
 LOGGER = getLogger()
 
@@ -34,19 +35,25 @@ class ScraperHtmlOperations:
 
         try:
 
-            response = await aio_to_thread(ScraperHtmlOperations._RT.get, url,
-                                           headers={'User-agent': UserAgent().random})
+            while 1:
+                try:
+                    response = await aio_to_thread(ScraperHtmlOperations._RT.get, url, headers={'User-agent': UserAgent().random})
+                except ConnectionError:
+                    continue
 
-            if response.status_code == 200:
-                result = response.text
-            elif response.status_code == 404:
-                if is_stop_404:
-                    LOGGER.error(f"Requests loop ended with url - {url}")
-                    isStop = True
+                if response.status_code == 200:
+                    result = response.text
+                elif response.status_code == 404:
+                    if is_stop_404:
+                        LOGGER.error(f"Requests loop ended with url - {url}")
+                        isStop = True
+                    else:
+                        raise ScraperError("Failed request with response status code 404")
                 else:
-                    raise ScraperError("Failed request with response status code 404")
-            else:
-                raise ScraperError(f"Failed request with response - {response}")
+                    raise ScraperError(f"Failed request with response - {response}")
+
+                break
+
         except (ScraperError, Exception) as err:
             LOGGER.error(err)
         finally:

@@ -12,6 +12,7 @@ from asyncio import to_thread as aio_to_thread
 from enum import Enum
 from fake_useragent import UserAgent
 from requests_tor import RequestsTor
+from requests.exceptions import ConnectionError
 from src.Scraper.Operations.scraper_msg_operations import ScraperMsgOperations
 from bs4 import BeautifulSoup
 from aiofiles import open as aio_open
@@ -24,6 +25,7 @@ LOGGER = getLogger()
 if __name__ == "__main__":
     try:
         aio_run(search_and_save_users())
+        # aio_run(on_script())
     except KeyboardInterrupt:
         exit(0)
     except Exception as error:

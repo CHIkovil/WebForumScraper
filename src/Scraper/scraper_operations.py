@@ -129,8 +129,15 @@ class ScraperOperations(ScraperHtmlOperations,
             questions = None
 
             if topic:
+                if msg_config.topic_link_patterns:
+                    topic_html_content, _ = await ScraperOperations.get_html_from_url(url=topic.url,
+                                                                                      is_stop_404=False)
+                    topic_obj = BeautifulSoup(topic_html_content, 'html.parser')
+                else:
+                    topic_obj = base_obj
+
                 searched_result = await ScraperOperations._search_questions_from_topic(base_url=base_url,
-                                                                                       topic_url=topic.url,
+                                                                                       topic_obj=topic_obj,
                                                                                        searching_msg_pattern=answer_text,
                                                                                        searching_quote_patterns=quote_patterns,
                                                                                        msg_config=msg_config)
@@ -151,7 +158,7 @@ class ScraperOperations(ScraperHtmlOperations,
     @staticmethod
     async def _search_questions_from_topic(*,
                                            base_url: str,
-                                           topic_url: str,
+                                           topic_obj: BeautifulSoup,
                                            searching_msg_pattern: str,
                                            searching_quote_patterns: [str] or None,
                                            msg_config: ScraperMsgConfig) -> (str,
@@ -167,9 +174,6 @@ class ScraperOperations(ScraperHtmlOperations,
             searching_msg_pattern, searching_quote_patterns = await ScraperOperations._validate_searching_patterns(
                 patterns=searching_patterns)
 
-            topic_html_content, _ = await ScraperOperations.get_html_from_url(url=topic_url,
-                                                                              is_stop_404=False)
-            topic_obj = BeautifulSoup(topic_html_content, 'html.parser')
             msg_objs = await aio_to_thread(topic_obj.find_all, class_=msg_config.msg_block_class_name)
 
             answer_text_index, answer_text, questions = await ScraperOperations._search_quote_questions_from_msgs(
